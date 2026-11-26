@@ -1,0 +1,89 @@
+# veracity-sql - production deployment
+#
+# Deployment folder:
+#   veracity-sql/
+#     docker-compose.prod.yaml
+#     FIRST_DEPLOYMENT.md              one-time setup on a new target
+#     .env.prod                        from .env.prod.example (secrets only: passwords, keys)
+#     veracity-sql-<timestamp>.tar   images (engine, api, answer, web)
+#     config/config.yaml, config.prod.yaml, levels.yaml
+#     logs/                            created on first start
+#
+# Build host:   .\scripts\dev.ps1 build          -> dist\veracity-sql-<timestamp>.tar
+#               copy docker-compose.prod.yaml, .env.prod.example, config/, FIRST_DEPLOYMENT.md and the .tar
+# New target:   follow FIRST_DEPLOYMENT.md once
+# Install:      docker load -i veracity-sql-<timestamp>.tar
+# Start:        docker compose -f docker-compose.prod.yaml --env-file .env.prod up -d
+# Check:        docker compose -f docker-compose.prod.yaml ps   (UI: http://127.0.0.1:8180 on the host, https://<UI_ORIGIN> through the reverse proxy)
+# Logs:         docker compose -f docker-compose.prod.yaml logs -f
+# Upgrade:      docker load the new tar, then the Start command again
+# Stop:         docker compose -f docker-compose.prod.yaml down
+#
+# Ports are bound to 127.0.0.1 only: web 8180, api 8100, answer 8200. An
+# HTTPS reverse proxy on the same host publishes them (session cookies are
+# HTTPS-only in production). The answer service runs LLM-generated SQL
+# against a real source, so never publish 8200 without that proxy.
+# engine, api and answer apply the Alembic migrations at startup.
+
+# Project and image names: override with COMPOSE_PROJECT_NAME / IMAGE_PREFIX
+# in .env (dev) or .env.prod (prod).
+name: ${COMPOSE_PROJECT_NAME:-veracity-sql}
+
+x-backend: &backend
+  env_file:
+    - .env.prod                        # secrets only
+  environment:
+    APP_ENV: prod                      # applies config/config.prod.yaml over config.yaml
+  volumes:
+    # Read-only. Edit config/*.yaml and restart; no rebuild needed.
+    - ./config:/app/config:ro
+    # The application's own rotating log files (engine.log, api.log, answer.log).
+    - ./logs:/app/logs
+  restart: always
+  logging:
+    driver: json-file
+    options: { max-size: "10m", max-file: "3" }
+
+services:
+  engine:
+    <<: *backend
+    image: ${IMAGE_PREFIX:-veracity-sql}-engine:latest
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 768M }
+
+  api:
+    <<: *backend
+    image: ${IMAGE_PREFIX:-veracity-sql}-api:latest
+    ports:
+      - "127.0.0.1:8100:8100"
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 512M }
+
+  answer:
+    <<: *backend
+    image: ${IMAGE_PREFIX:-veracity-sql}-answer:latest
+    ports:
+      - "127.0.0.1:8200:8200"
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 768M }
+
+  web:
+    image: ${IMAGE_PREFIX:-veracity-sql}-web:latest
+    environment:
+      APP_ENV: prod
+    volumes:
+      # catalog.web.api_base_url / answer_base_url are read from here at start.
+      - ./config:/app/config:ro
+    ports:
+      - "127.0.0.1:8180:8080"
+    depends_on: [api]
+    restart: always
+    deploy:
+      resources:
+        limits: { cpus: "0.5", memory: 128M }
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }

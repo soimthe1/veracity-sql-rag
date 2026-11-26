@@ -1,0 +1,25 @@
+{
+  "name": "ai-catalog-web",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Standalone status UI for the AI Catalog Generator. Reads only from the catalog API (never touches SQL Server or the LLM) — see CATALOG_CONSUMER_GUIDE.md. Deliberately its own small app.",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "lint": "tsc --noEmit"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.2",
+    "@types/react": "^18.3.11",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.2",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.8"
+  }
+}

@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" stroke-linecap="round" stroke-linejoin="round">
+  <title>Veracity SQL</title>
+  <g stroke="#4F7DF5" stroke-width="6.5">
+    <path d="M6 20.5h10.5"/>
+    <path d="M10.5 30.5h11"/>
+    <path d="M15 40.5h11.5"/>
+  </g>
+  <path d="M22.8 46.5 29.8 54 58 10" stroke="#1FA463" stroke-width="8"/>
+</svg>

@@ -1,0 +1,15 @@
+# Catalog engine — discovery/inference scheduler process.
+# Install from the repo root so `shared/` resolves: pip install -r engine/requirements.txt
+pyyaml==6.0.2
+python-dotenv==1.0.1
+pydantic==2.9.2
+SQLAlchemy==2.0.35
+psycopg2-binary==2.9.9
+alembic==1.13.3
+requests==2.32.3
+APScheduler==3.10.4
+pyodbc==5.1.0
+# Other source databases (PostgreSQL uses psycopg2 above; SQLite is built in).
+# Any further database: pip install its SQLAlchemy dialect and give the source a url.
+PyMySQL==1.1.1
+oracledb==2.4.1

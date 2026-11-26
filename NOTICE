@@ -1,0 +1,8 @@
+Veracity SQL
+Copyright 2026 soimthe1
+
+Licensed under the Apache License, Version 2.0 (see LICENSE).
+
+This product does not bundle third-party source code. Its dependencies are
+installed at build time from PyPI and npm under their own licenses; see
+requirements.txt, */requirements.txt and web/package.json.

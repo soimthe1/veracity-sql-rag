@@ -1,0 +1,35 @@
+# Quick start settings, merged over config/config.yaml inside the containers
+# (mounted as /app/config/local/config.yaml). Secrets come from the
+# generated /secrets/catalog.env. Edit, then:
+#   docker compose -f docker-compose.quickstart.yaml restart
+
+ai:
+  default:
+    provider: ollama
+    # Ollama on your machine. With --profile ollama use http://ollama:11434.
+    base_url: http://host.docker.internal:11434
+    model: qwen2.5-coder:7b
+
+catalog:
+  database:
+    host: db
+    port: 5432
+    database: ai_catalog
+    user: catalog
+    password: "${CATALOG_DB_PASSWORD}"
+    sslmode: disable
+
+  sources:
+    - name: demo
+      enabled: true
+      type: postgresql
+      host: db
+      port: 5432
+      user: catalog_reader
+      password: "${SRC_DEMO_PASSWORD}"
+      databases_to_catalog: [sales, hr, inventory]
+
+  web:
+    # Same origin as the UI: nginx forwards these paths (docker/quickstart/nginx.conf).
+    api_base_url: "/api"
+    answer_base_url: "/answer"

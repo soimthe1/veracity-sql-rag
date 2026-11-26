@@ -1,0 +1,37 @@
+# Build context is the repo root for all four images. Keep secrets, local
+# environments, runtime data and build output out of every image.
+
+# Env files: secrets reach the containers at run time (compose env_file), never at build time.
+.env
+.env.*
+**/.env
+**/.env.*
+
+# Local environments and caches
+.venv/
+venv/
+__pycache__/
+**/__pycache__/
+*.py[cod]
+.pytest_cache/
+web/node_modules/
+node_modules/
+web/dist/
+
+# Runtime data and build output
+data/
+logs/
+models/
+output/
+dist/
+*.tar
+*.log
+
+# Not needed by the build
+.git/
+.vscode/
+.idea/
+
+# Private, in-house files: reach containers through the ./config mount, never baked into images.
+config/local/
+docs/local/

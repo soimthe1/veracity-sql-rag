@@ -1,0 +1,33 @@
+# Catalog web UI container — a small standalone static site (see
+# DECISIONS.md).
+# Build from the repo root:
+#
+#   docker build -f docker/Dockerfile.web -t veracity-sql-web .
+#
+# Multi-stage: Vite/React is compiled to static assets in the `build`
+# stage, then served by nginx — the Node toolchain never ships in the
+# final image. The API URLs are read from the mounted config/ at
+# CONTAINER START, not build time (see docker-entrypoint-web.sh /
+# public/env.js), so one built image serves every environment.
+
+FROM node:20-slim AS build
+WORKDIR /app
+COPY web/package.json web/package-lock.json* ./
+RUN npm install
+COPY web/ ./
+# Brand: brand.local wins when present in the build context (git-ignored).
+COPY branding/ /branding/
+RUN npm run build
+
+FROM nginx:1.27-alpine AS runtime
+COPY --from=build /app/dist /usr/share/nginx/html
+COPY docker/nginx.conf /etc/nginx/conf.d/default.conf
+COPY docker/docker-entrypoint-web.sh /docker-entrypoint-web.sh
+RUN chmod +x /docker-entrypoint-web.sh
+
+EXPOSE 8080
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD wget -q -O - http://localhost:8080/ >/dev/null 2>&1 || exit 1
+
+ENTRYPOINT ["/docker-entrypoint-web.sh"]

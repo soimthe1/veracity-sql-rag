@@ -1,0 +1,50 @@
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Node / Vite
+node_modules/
+*.tsbuildinfo
+
+# Build output and images (.\scripts\dev.ps1 build writes dist\)
+dist/
+build/
+*.tar
+
+# Logs and local state
+logs/
+*.log
+data/
+.dev-pids
+
+# Editor / OS
+.idea/
+.vscode/
+.DS_Store
+
+# Real env files and keys stay local; templates (*.example) are tracked
+.env
+.env.*
+*.env
+!*.example
+*.pem
+*.key
+*.pfx
+
+# Private, in-house only (never public)
+config/local/
+branding/brand.local/
+docs/local/
+Claude outputs/
+CLAUDE.md
+.claude/
+
+# Build / caches
+*.egg-info/
+.coverage
+htmlcov/
+web/dist/

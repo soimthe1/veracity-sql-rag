@@ -1,0 +1,165 @@
+# Classification lattice.
+#
+# These values are ordered, but the ordering is NOT the access model. Access is
+# exact-match on the (level, category) pair defined below: holding 50A does not
+# confer 20A, and holding 30A does not confer 30B. See the CATEGORIES section.
+#
+# The ordering is used only to snap a detected marking up to the nearest tier
+# (over-classify when a marking falls between two).
+#
+# Values gapped by 10 so a tier can be inserted (e.g. 45) as a config change
+# rather than a re-index. Display names live here, never in the chunk payload,
+# so a rename is a one-row update.
+
+# Colours must be distinguishable from EACH OTHER, not merely ordered: they
+# walk the hue circle so adjacent levels never look alike.
+#
+# Colour is never the only signal. Every banner also carries the level name and
+# the Arabic term, which is what actually communicates to a colour-blind
+# reader -- and what matters when a screenshot is printed in monochrome.
+levels:
+  - {value: 10,  key: GENERAL,               name: General,               name_ar: "عام",              color: "#2E7D4F"}
+  - {value: 20,  key: CONFIDENTIAL,          name: Confidential,          name_ar: "سري",              color: "#2563A8"}
+  - {value: 30,  key: HIGHLY_CONFIDENTIAL,   name: Highly Confidential,   name_ar: "سري للغاية",       color: "#7A5AA8"}
+  - {value: 40,  key: RESTRICTED,            name: Restricted,            name_ar: "مقيد",             color: "#B4761A"}
+  - {value: 50,  key: TOP_SECRET,            name: Top Secret,            name_ar: "بالغ السرية",      color: "#C0522A"}
+  - {value: 60,  key: RESERVED_60,           name: Reserved 60,           name_ar: "محجوز 60",         color: "#0F8A8A"}
+  - {value: 70,  key: RESERVED_70,           name: Reserved 70,           name_ar: "محجوز 70",         color: "#6E8B1E"}
+  - {value: 80,  key: RESERVED_80,           name: Reserved 80,           name_ar: "محجوز 80",         color: "#B03C7A"}
+  - {value: 90,  key: RESERVED_90,           name: Reserved 90,           name_ar: "محجوز 90",         color: "#4A5FC1"}
+  - {value: 100, key: RESERVED_100,          name: Reserved 100,          name_ar: "محجوز 100",        color: "#8A6A2E"}
+  - {value: 110, key: RESERVED_110,          name: Reserved 110,          name_ar: "محجوز 110",        color: "#9B3030"}
+  - {value: 120, key: RESERVED_120,          name: Reserved 120,          name_ar: "محجوز 120",        color: "#6B1F6B"}
+
+# ---------------------------------------------------------------------------
+# CATEGORIES -- the second access dimension
+# ---------------------------------------------------------------------------
+# Access is exact-match on the (level, category) PAIR. There is no inheritance
+# on either axis: a grant of (30, A) confers 30/A and nothing else. Holding
+# (50, A) does NOT imply (20, A).
+#
+# A-Z are reserved so the matrix never needs migrating. Give the ones you
+# actually use real names; the rest stay hidden in the UI until enabled.
+
+categories:
+  - {key: A, name: Operations,     name_ar: "العمليات",     enabled: true}
+  - {key: B, name: Finance,        name_ar: "المالية",      enabled: true}
+  - {key: C, name: Personnel,      name_ar: "الأفراد",      enabled: true}
+  - {key: D, name: Security,       name_ar: "الأمن",        enabled: true}
+  - {key: E, name: Legal,          name_ar: "القانونية",    enabled: true}
+  - {key: F, name: Category F,     name_ar: "الفئة F",      enabled: true}
+  - {key: G, name: Category G,     name_ar: "الفئة G",      enabled: true}
+  - {key: H, name: Category H,     name_ar: "الفئة H",      enabled: false}
+  - {key: I, name: Category I,     name_ar: "الفئة I",      enabled: false}
+  - {key: J, name: Category J,     name_ar: "الفئة J",      enabled: false}
+  - {key: K, name: Category K,     name_ar: "الفئة K",      enabled: false}
+  - {key: L, name: Category L,     name_ar: "الفئة L",      enabled: false}
+  - {key: M, name: Category M,     name_ar: "الفئة M",      enabled: false}
+  - {key: N, name: Category N,     name_ar: "الفئة N",      enabled: false}
+  - {key: O, name: Category O,     name_ar: "الفئة O",      enabled: false}
+  - {key: P, name: Category P,     name_ar: "الفئة P",      enabled: false}
+  - {key: Q, name: Category Q,     name_ar: "الفئة Q",      enabled: false}
+  - {key: R, name: Category R,     name_ar: "الفئة R",      enabled: false}
+  - {key: S, name: Category S,     name_ar: "الفئة S",      enabled: false}
+  - {key: T, name: Category T,     name_ar: "الفئة T",      enabled: false}
+  - {key: U, name: Category U,     name_ar: "الفئة U",      enabled: false}
+  - {key: V, name: Category V,     name_ar: "الفئة V",      enabled: false}
+  - {key: W, name: Category W,     name_ar: "الفئة W",      enabled: false}
+  - {key: X, name: Category X,     name_ar: "الفئة X",      enabled: false}
+  - {key: Y, name: Category Y,     name_ar: "الفئة Y",      enabled: false}
+  - {key: Z, name: Quarantine,     name_ar: "الحجر",        enabled: true, reserved: true}
+
+# Default-deny. An unresolvable object lands at (120, Z) -- the top level in
+# the reserved quarantine category, which no role should ever be granted.
+# With no inheritance there is no "highest level" that implies everything, so
+# the reserved category is what makes default-deny structural rather than
+# conventional.
+default_level: 120
+default_category: "Z"
+quarantine_unresolved: true
+
+# Category resolution from names (database, schema, table), applied after the
+# level is known. Matched as whole words, after Arabic normalisation.
+category_folders:
+  "operations": A
+  "العمليات": A
+  "finance": B
+  "المالية": B
+  "personnel": C
+  "الأفراد": C
+  "security": D
+  "الأمن": D
+  "legal": E
+  "القانونية": E
+
+# ---------------------------------------------------------------------------
+# MARKINGS -- REPLACE THESE WITH YOUR ORGANISATION'S ACTUAL TERMS
+# ---------------------------------------------------------------------------
+# Common English and Arabic classification terms. Replace them with the
+# markings your organisation actually uses.
+#
+# Arabic entries are matched AFTER normalisation (diacritics stripped, alef
+# variants folded, tatweel removed), so write them in plain unvocalised form.
+# Longest match wins.
+
+markings:
+  # --- Arabic -------------------------------------------------------------
+  "بالغ السرية": 50
+  "سري للغايه": 30          # ة folded to ه by normalisation
+  "سري للغاية": 30
+  "سري جدا": 30
+  "مقيد": 40
+  "سري": 20
+  "خاص": 20
+  "محدود": 20
+  "غير مصنف": 10
+  "غير سري": 10
+  "عام": 10
+
+  # --- English ------------------------------------------------------------
+  "TOP SECRET": 50
+  "TOPSECRET": 50
+  "TS": 50
+  "RESTRICTED": 40
+  "HIGHLY CONFIDENTIAL": 30
+  "HIGH CONF": 30
+  "HC": 30
+  "CONFIDENTIAL": 20
+  "CONF": 20
+  "C": 20
+  "GENERAL": 10
+  "UNCLASSIFIED": 10
+  "UNCLAS": 10
+  "PUBLIC": 10
+  "U": 10
+
+# Naming conventions: applied to database, schema and table names when no
+# explicit marking is found. Matched case-insensitively against any path segment,
+# after Arabic normalisation.
+folder_conventions:
+  "بالغ-السريه": 50
+  "بالغ السريه": 50
+  "مقيد": 40
+  "سري-للغايه": 30
+  "سري للغايه": 30
+  "سري": 20
+  "عام": 10
+  "top-secret": 50
+  "top_secret": 50
+  "restricted": 40
+  "highly-confidential": 30
+  "confidential": 20
+  "general": 10
+  "public": 10
+
+# ===========================================================================
+# Cell labels
+# ===========================================================================
+
+# Optional display names for individual cells, shown wherever a cell chip
+# appears (hover it to see the name). Key = the cell, LEVEL THEN CATEGORY:
+# "10A", "20B". Any other spelling ("A10") is a
+# configuration error, not ignored. Cells without an entry show their code.
+cell_labels:
+  # "10A": {name: "Ops General", name_ar: "عمليات عام"}
+  # "20B": {name: "Finance Confidential", name_ar: "مالية سري"}

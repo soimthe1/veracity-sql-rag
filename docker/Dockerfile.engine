@@ -1,0 +1,60 @@
+# Catalog engine (discovery/inference scheduler) container.
+#
+# Deliberately its OWN image/process, never combined with the api image —
+# see DECISIONS.md's "why a separate process" note: a hung SQL Server
+# connection or a slow LLM call must never be able to affect the REST API
+# other applications depend on. Build from the repo root:
+#
+#   docker build -f docker/Dockerfile.engine -t veracity-sql-engine .
+#
+# This image contains ONLY the app and its Python/ODBC runtime — it never
+# bundles Postgres or any other data store. Every connection
+# (catalog Postgres, SQL Server sources, Ollama/OpenAI-compatible LLM)
+# is made outward, at runtime, using the hosts in config/ and the secrets
+# in .env.prod — this module always points AT existing infrastructure,
+# never ships its own.
+
+# Pinned to the -bookworm suffix rather than the floating `python:3.11-slim`
+# tag: that tag can move to a newer Debian base at any time, which would
+# silently break the hardcoded "bookworm" codename in the Microsoft ODBC
+# repo line below. Bump both together deliberately if you ever upgrade.
+FROM python:3.11-slim-bookworm AS base
+
+# --- Microsoft ODBC Driver 18 for SQL Server -------------------------------
+# Required by pyodbc to reach the user's SQL Server sources. Installed from
+# Microsoft's own apt repo per their documented instructions; ACCEPT_EULA
+# is required non-interactively for msodbcsql18.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl gnupg ca-certificates apt-transport-https \
+    && curl -sSL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor -o /usr/share/keyrings/microsoft-prod.gpg \
+    && echo "deb [arch=amd64,arm64,armhf signed-by=/usr/share/keyrings/microsoft-prod.gpg] https://packages.microsoft.com/debian/12/prod bookworm main" \
+       > /etc/apt/sources.list.d/mssql-release.list \
+    && apt-get update \
+    && ACCEPT_EULA=Y apt-get install -y --no-install-recommends msodbcsql18 unixodbc unixodbc-dev \
+    && apt-get purge -y --auto-remove curl gnupg \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY engine/requirements.txt engine/requirements.txt
+RUN pip install --no-cache-dir -r engine/requirements.txt
+
+COPY shared/ shared/
+COPY engine/ engine/
+COPY migrations/ migrations/
+COPY alembic.ini alembic.ini
+COPY config/ config/
+
+# Not baked as secrets — .env/.env.prod are supplied at runtime via
+# docker-compose's env_file (see docker-compose.yaml), never COPYed into
+# the image, so rebuilding never requires new credentials and the image
+# itself never contains any.
+
+# Settings: config/ is mounted read-only by compose; APP_ENV=prod (set in
+# docker-compose.prod.yaml) merges config.prod.yaml over config.yaml.
+ENV PYTHONUNBUFFERED=1
+
+# Engine has no HTTP port — health is observed via the api's /v1/status
+# and /health endpoints (CatalogHealth rows this process writes), not a
+# container healthcheck here.
+CMD ["python", "-m", "engine.main"]

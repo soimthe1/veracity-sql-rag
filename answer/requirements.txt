@@ -1,0 +1,28 @@
+# Catalog answerer — natural-language-to-SQL REST API process.
+# Install from the repo root so `shared/`, `api/`, `engine/` resolve:
+#   pip install -r answer/requirements.txt
+# Needs both api/'s web stack (it serves /v1/ask) and engine/'s SQL
+# Server driver (it executes guardrail-approved queries directly via
+# engine.connectors.mssql, the same connector the engine process uses)
+# and reuses api/search + api/joinpaths for grounding.
+pyyaml==6.0.2
+python-dotenv==1.0.1
+pydantic==2.9.2
+SQLAlchemy==2.0.35
+psycopg2-binary==2.9.9
+alembic==1.13.3
+requests==2.32.3
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+pyodbc==5.1.0
+# Other source databases (PostgreSQL uses psycopg2 above; SQLite is built in).
+# Any further database: pip install its SQLAlchemy dialect and give the source a url.
+PyMySQL==1.1.1
+oracledb==2.4.1
+# Resolves a signed-in user's session token itself (answer/access_context.py)
+# when catalog.auth.enabled is true, so a browser can never widen its own
+# data access by editing the grants it sends.
+PyJWT==2.9.0
+# Create: answers as Word documents and PowerPoint decks (answer/exports.py).
+python-docx==1.2.0
+python-pptx==1.0.2

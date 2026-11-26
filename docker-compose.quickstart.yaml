@@ -1,0 +1,104 @@
+# Veracity SQL - quick start: everything in one command, nothing to configure.
+#
+#   docker compose -f docker-compose.quickstart.yaml up -d --build
+#   open http://localhost:8180
+#
+# What you get:
+#   - its own Postgres (catalog database + three demo databases: sales, hr, inventory)
+#   - engine, api, answer and web, built from this source tree
+#   - secrets generated on first start (never shared defaults), kept in a volume
+#   - sign-in off (catalog.auth.mode: none) - for a laptop only, see README "Security"
+#
+# Asking questions needs an LLM. By default it uses Ollama on your machine
+# (http://localhost:11434, model qwen2.5-coder:7b). Or start one here:
+#   docker compose -f docker-compose.quickstart.yaml --profile ollama up -d --build
+#   docker compose -f docker-compose.quickstart.yaml exec ollama ollama pull qwen2.5-coder:7b
+# Settings: docker/quickstart/local/config.yaml (restart after editing).
+#
+# Ports: WEB_PORT (default 8180). Stop: docker compose -f docker-compose.quickstart.yaml down
+# Wipe all data too: add -v.
+
+name: ${COMPOSE_PROJECT_NAME:-veracity-sql-quickstart}
+
+x-backend: &backend
+  environment:
+    APP_ENV: dev
+    ENV_FILE: /secrets/catalog.env
+  volumes:
+    - secrets:/secrets:ro
+    - ./docker/quickstart/local:/app/config/local:ro
+  extra_hosts:
+    - "host.docker.internal:host-gateway"   # reach Ollama on the host (Linux needs this line)
+  depends_on:
+    db:
+      condition: service_healthy
+  restart: unless-stopped
+
+services:
+  secrets:
+    image: alpine:3.20
+    volumes:
+      - secrets:/secrets
+      - ./docker/quickstart/make-secrets.sh:/make-secrets.sh:ro
+    command: ["sh", "/make-secrets.sh"]
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: catalog
+      POSTGRES_DB: ai_catalog
+      POSTGRES_PASSWORD_FILE: /secrets/db_password
+    volumes:
+      - secrets:/secrets:ro
+      - db-data:/var/lib/postgresql/data
+      - ./docker/quickstart/initdb:/docker-entrypoint-initdb.d:ro
+      - ./examples/demo:/demo:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U catalog -d ai_catalog"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    depends_on:
+      secrets:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  engine:
+    <<: *backend
+    build: { context: ., dockerfile: docker/Dockerfile.engine }
+    image: ${IMAGE_PREFIX:-veracity-sql}-engine:latest
+
+  api:
+    <<: *backend
+    build: { context: ., dockerfile: docker/Dockerfile.api }
+    image: ${IMAGE_PREFIX:-veracity-sql}-api:latest
+
+  answer:
+    <<: *backend
+    build: { context: ., dockerfile: docker/Dockerfile.answer }
+    image: ${IMAGE_PREFIX:-veracity-sql}-answer:latest
+
+  web:
+    build: { context: ., dockerfile: docker/Dockerfile.web }
+    image: ${IMAGE_PREFIX:-veracity-sql}-web:latest
+    environment:
+      APP_ENV: dev
+    volumes:
+      - ./docker/quickstart/local:/app/config/local:ro
+      - ./docker/quickstart/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    ports:
+      - "${WEB_PORT:-8180}:8080"
+    depends_on: [api, answer]
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama:0.40.9
+    profiles: ["ollama"]
+    volumes:
+      - ollama:/root/.ollama
+    restart: unless-stopped
+
+volumes:
+  secrets:
+  db-data:
+  ollama:

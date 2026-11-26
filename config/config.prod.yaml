@@ -1,0 +1,459 @@
+# Production settings: the same keys as config.yaml, in the same order.
+# Merged over config.yaml when APP_ENV=prod. Edit the values at deployment;
+# when a key is added to or removed from config.yaml, do the same here.
+
+ai:
+  default:
+    provider: ollama                  # ollama | openai (OpenAI, vLLM, any compatible server)
+    base_url: http://localhost:11434
+    model: qwen3-coder:30b
+    suppress_thinking: true           # ask reasoning models not to think (batch inference)
+    timeout_seconds: 120
+    # For an OpenAI-compatible endpoint: provider: openai, base_url ending in /v1,
+    # and, if it needs a key, api_key_env: LLM_API_KEY (the key goes in .env).
+
+  media:                              # media layer (ComfyUI: image, audio, video); not used yet
+    provider: comfyui
+    enabled: false
+    base_url: http://localhost:8188
+
+service:
+  name: ai-catalog
+  log_level: WARNING
+  # Rotating file logs — one file per process under log_dir (engine.log,
+  # api.log, answer.log, trigger_validation.log, ...), in addition to
+  # the console. Capped at log_max_bytes per active file + log_backup_count
+  # rotated backups (5 MB + 1 backup = 10 MB total per process by
+  # default), so logs never grow unbounded in production.
+  log_to_file: true
+  log_dir: logs
+  log_max_bytes: 5242880
+  log_backup_count: 1
+
+catalog:
+  # Master switch. false => engine does nothing, API reports DISABLED,
+  # nothing else in this stack is touched. This is the module's only
+  # hard dependency on anything: everything below only matters if this
+  # is true.
+  enabled: true
+
+  # -------------------------------------------------------------------
+  # Catalog's own Postgres database. This is YOUR EXISTING Postgres
+  # infrastructure — this app never bundles or manages a Postgres
+  # process itself (see docker-compose.yaml). Point it at a database
+  # dedicated to the catalog; never share another application's database.
+  # -------------------------------------------------------------------
+  database:
+    host: "<CATALOG_DB_HOST>"
+    port: 5432
+    database: 'ai_catalog'
+    user: 'ai_catalog'
+    password: "${CATALOG_DB_PASSWORD}"
+    sslmode: "prefer"
+    pool_size: 10
+    pool_max_overflow: 10
+    connect_timeout_seconds: 5
+
+  # -------------------------------------------------------------------
+  # Source databases to catalog. One entry per server. Add more by
+  # copying a block here; its password goes in .env as
+  # SRC_<NAME>_PASSWORD. An empty list is valid — the module is enabled
+  # but idle, waiting to be pointed at something.
+  # `databases_to_catalog: []` (empty) means autodiscover every online,
+  # readable database on that source — this is what makes new databases
+  # show up in the catalog automatically with zero manual config.
+  #
+  # type: mssql (default, native ODBC), postgresql, mysql, mariadb,
+  # oracle or sqlite. Any other database SQLAlchemy supports (Snowflake,
+  # BigQuery, DuckDB, ClickHouse, Trino, Databricks, DB2, ...): pip install
+  # its SQLAlchemy dialect and give `type` plus a `url` (no password in it).
+  # Examples:
+  #   - name: sales
+  #     type: postgresql
+  #     host: postgres.example.internal
+  #     user: catalog_reader
+  #     password: "${SRC_SALES_PASSWORD}"
+  #     schemas: []            # empty = every non-system schema
+  #   - name: shop
+  #     type: mysql
+  #     host: mysql.example.internal
+  #     user: catalog_reader
+  #     password: "${SRC_SHOP_PASSWORD}"
+  #   - name: erp
+  #     type: oracle
+  #     url: "oracle+oracledb://catalog_reader@ora.example.internal:1521/?service_name=ERP"
+  #     password: "${SRC_ERP_PASSWORD}"
+  #   - name: demo
+  #     type: sqlite
+  #     url: "sqlite:///data/demo.db"
+  # -------------------------------------------------------------------
+  sources:
+    - name: primary
+      enabled: true
+      type: mssql
+      # The images install Microsoft ODBC Driver 18.
+      driver: "ODBC Driver 18 for SQL Server"
+      host: "<SQL_SERVER_HOST>"
+      port: 1433
+      user: "ai_catalog_reader"
+      password: "${SRC_PRIMARY_PASSWORD}"
+      trust_server_certificate: true
+      encrypt: true
+      connect_timeout_seconds: 5
+      databases_to_catalog: []
+
+  discovery:
+    # Baseline structural sweep (sys.tables/columns/keys/views/procs/etc.)
+    interval_minutes: 120
+    max_concurrent_sources: 2
+    # Change detection: if a database/object fingerprint hasn't moved,
+    # discovery does almost nothing on that object this cycle.
+    fingerprint_enabled: true
+
+  validation:
+    # Semantic revalidation pass: re-check relationship confidence,
+    # entity interpretation, enum interpretation, sensitivity hints.
+    interval_hours: 12
+
+  # -------------------------------------------------------------------
+  # THE COVERAGE KNOB — "how much of the data should be considered for
+  # the catalog", expressed as a PERCENTAGE of discovered objects, not
+  # as a list of databases/tables. See DECISIONS.md for the full
+  # reasoning behind the 30% default and how to tune it.
+  #
+  # Every accessible object always gets Level-1 (name, columns, types,
+  # basic dependencies, fingerprint — cheap, metadata-only). This knob
+  # controls what fraction of objects — ranked by a computed relevance
+  # score — additionally gets Level-2 deep treatment (bounded profiling,
+  # value-overlap relationship testing, LLM semantic inference).
+  #
+  # If answers feel incomplete, raise deep_analysis_target_pct (e.g. to
+  # 80). The next validation cycle schedules only the newly-included
+  # slice for deep analysis — it does not rebuild what's already been
+  # learned.
+  # -------------------------------------------------------------------
+  coverage:
+    deep_analysis_target_pct: 30
+    min_deep_objects_per_source: 25
+    max_deep_objects_per_source: 2000
+    # These object classifications are always deep-analyzed regardless
+    # of the percentage (they're where the business meaning lives), and
+    # these are always excluded regardless of the percentage (never
+    # worth the spend). See engine/classification.py for the full list
+    # of categories and engine/coverage.py for how the cutoff is applied.
+    always_deep_categories: ["BUSINESS_ENTITY", "RELATIONSHIP_TABLE"]
+    never_deep_categories: ["SYSTEM_TECHNICAL", "TEMPORARY", "STAGING"]
+    # Recompute the ranked selection whenever this knob or the schema
+    # changes, but only enqueue the newly-added slice — never a full
+    # rebuild just because the knob moved.
+    reevaluate_on_change: true
+    # ---- Demand-driven ("self-correcting") coverage — see DECISIONS.md ----
+    # answer/ bumps an entity's unanswered_hit_count every time a
+    # question's search matches it but it isn't TRUSTED yet. An entity
+    # whose count reaches demand_promote_threshold is force-promoted to
+    # deep analysis on the NEXT cycle, same as always_deep_categories
+    # (never_deep_categories still wins). Below that threshold,
+    # demand_rank_boost (capped at demand_rank_boost_cap) still nudges
+    # it up the percentage-cutoff ranking. This is what "self correcting"
+    # means here: repeated real-world demand on something the catalog
+    # can't answer yet gets it swept automatically.
+    demand_promote_threshold: 10
+    demand_rank_boost: 0.03
+    demand_rank_boost_cap: 0.5
+
+  # Business domains. The LLM names each table's domain in free text, which
+  # produced dozens of overlapping names ("Access Control", "Access
+  # Management", "Identity and Access Management"...). Every proposed domain
+  # is merged into the FIRST entry below whose keyword starts a word in it;
+  # anything matching nothing is kept as written. Order matters: put specific
+  # phrases before broad words. Edits apply on the engine's next discovery
+  # cycle (hourly, and at startup) — no migration needed. See shared/domains.py.
+  domains:
+    enabled: true
+    canonical:
+      - name: "Configuration"
+        keywords: ["configuration", "settings", "config"]
+      - name: "Human Resources"
+        keywords: ["human resources", "hr", "personnel", "employee", "staff", "workforce", "organization", "organisation", "payroll"]
+      - name: "Security & Access"
+        keywords: ["access", "identity", "security", "authentication", "authorization", "permission", "user management", "credential", "cyber"]
+      - name: "Data Integration"
+        keywords: ["integration", "transfer", "migration", "synchroni", "replication", "etl"]
+      - name: "Analytics & AI"
+        keywords: ["analytics", "data science", "machine learning", "reporting", "intelligence"]
+      - name: "Data Management"
+        keywords: ["data management", "data processing", "master data", "file processing", "storage", "data quality"]
+      - name: "Documents & Content"
+        keywords: ["document", "content", "file", "archive", "records management"]
+      - name: "Business Processes"
+        keywords: ["business process", "workflow", "business operations", "process", "request", "approval"]
+      - name: "IT Operations"
+        keywords: ["it operations", "information technology", "it infrastructure", "infrastructure", "network", "system administration", "monitoring", "server"]
+      - name: "Applications"
+        keywords: ["application", "software", "user interface", "navigation"]
+      - name: "Media & Communications"
+        keywords: ["media", "news", "communication"]
+      - name: "Governance"
+        keywords: ["governance", "compliance", "legal", "audit"]
+      - name: "Finance"
+        keywords: ["finance", "financial", "accounting", "budget", "billing"]
+      - name: "3D & Simulation"
+        keywords: ["3d", "computer graphics", "game", "simulation", "model instance"]
+      - name: "Environment & Weather"
+        keywords: ["meteorolog", "weather", "environment", "climate"]
+      - name: "Quality Assurance"
+        keywords: ["quality assurance", "testing", "test"]
+
+  profiling:
+    enabled: true
+    max_sample_rows: 500
+    statement_timeout_seconds: 5
+    max_concurrent_queries_per_source: 1
+    bounded_value_overlap_sample_rows: 200
+    # Hard safety rails — never disable these to "get more coverage";
+    # raise the coverage percentage instead.
+    forbid_full_table_scans: true
+    forbid_select_star: true
+
+  inference:
+    # LLM PROPOSES semantic interpretations; it never sets confidence
+    # directly (see confidence.weights below): evidence decides, the LLM
+    # only suggests. Provider, model, timeout and thinking control are
+    # the ai.default profile at the top of this file. false = no LLM
+    # calls at all (engine and answer service).
+    enabled: true
+
+  confidence:
+    trusted_threshold: 0.90
+    suspect_threshold: 0.55
+    # Weighted evidence -> confidence. The LLM's own "semantic_interpretation"
+    # weight is deliberately small — it nudges, it doesn't decide. Centralized
+    # here so tuning doesn't require a code change.
+    weights:
+      explicit_fk: 0.92
+      pk_fk_datatype_compatible: 0.12
+      value_overlap_high: 0.35
+      value_overlap_low_penalty: -0.20
+      uniqueness_cardinality_match: 0.10
+      view_definition_confirms: 0.20
+      procedure_usage_confirms: 0.15
+      executed_join_evidence: 0.25
+      naming_similarity: 0.15
+      llm_semantic_interpretation: 0.08
+      contradictory_evidence_penalty: -0.40
+      # Entity-level evidence — see engine/confidence.py's
+      # record_entity_structural_evidence. Without these, an entity's
+      # only possible evidence was llm_semantic_interpretation (capped
+      # at 0.08), so no table/view could ever cross trusted_threshold
+      # or even suspect_threshold — this is what was silently blocking
+      # every Ask question.
+      structural_completeness: 0.50
+      relationship_participation: 0.45
+
+  # -------------------------------------------------------------------
+  # PROVISIONAL access classification shim — NOT a real permission
+  # system. Infers (level, category) for every entity/field from its
+  # sensitivity_flags, purely so the schema fields a future proper
+  # governance system needs already exist and are populated with a
+  # reasonable guess. Security enforcement for
+  # /v1/ask (below) already treats these as real gates even though the
+  # values themselves are provisional — "patch security later" means
+  # "the values get more accurate later," not "there is no gate now."
+  # -------------------------------------------------------------------
+  classification:
+    enabled: true
+    default_level: 10
+    default_category: "A"
+    # AI layer of data bucketing: a flag PROPOSES a level (highest flag
+    # wins, snapped UP to a tier in config/levels.yaml) and, where listed,
+    # a category. It never overrides a human decision — disagreements go
+    # to Data access > Review. Values are levels.yaml tiers (10..120).
+    level_by_sensitivity_flag:
+      PII: 20
+      HR: 20
+      FINANCIAL: 20
+      HEALTH: 30
+      DISCIPLINARY: 30
+      SECURITY: 30
+      CREDENTIALS: 50
+    category_by_sensitivity_flag:
+      PII: "C"
+      HR: "C"
+      HEALTH: "C"
+      DISCIPLINARY: "C"
+
+  # -------------------------------------------------------------------
+  # Login + this project's OWN (level, category) permission matrix for
+  # the web UI. Code default is false (no login page at all — the web
+  # UI goes straight into the app, unrestricted); this development
+  # config enables it. Turn it on only once you have created at least
+  # one admin user (see scripts/bootstrap_admin.py) — login never
+  # self-provisions an account from a valid AD bind alone.
+  # See shared/auth/ and DECISIONS.md.
+  # -------------------------------------------------------------------
+  auth:
+    # Production always signs in: local or ldap, never none.
+    mode: local
+    cookie_name: "ai_catalog_session"
+    expiry_minutes: 480
+    algorithm: "HS256"
+    # Secure flag on the session cookie (HTTPS only). false over plain http.
+    # Production always signs in (catalog.auth.enabled: true in config.yaml):
+    # with sign-in off, every request would be an unrestricted administrator
+    # and Ask would trust any grants it is sent.
+    cookie_secure: true
+    # Name of the ENV VAR holding the JWT signing secret — never the
+    # secret itself. Set this var in .env to a long random value before
+    # enabling auth; shared/auth/tokens.py refuses to start signing
+    # tokens if it's unset or under 16 characters.
+    jwt_secret_env_var: "CATALOG_AUTH_JWT_SECRET"
+    # FIRST ADMIN: comma-separated AD account(s) that become members of
+    # the built-in Administrator role on their first successful sign-in
+    # (only while they have no roles yet). Set it, sign in once, then
+    # clear it. Alternative:
+    #   python scripts/bootstrap_admin.py <account>
+    # FIRST ADMIN: AD account(s) that join the built-in Administrator role
+    # on their first sign-in. Works only while the app has NO active
+    # administrator. Sign in once, then set this back to "".
+    bootstrap_admins: "<FIRST_ADMIN_ACCOUNT>"
+    ldap:
+      # "ldap://host:port" or "ldaps://host:port" — your AD/LDAP server.
+      server_url: "<LDAP_URL>"
+      bind_template: "{username}@{domain}"
+      domain: "<AD_DOMAIN>"
+      search_base: "<AD_SEARCH_BASE>"
+      user_filter: "(sAMAccountName={username})"
+      use_starttls: true
+      # Verify the AD server's certificate (ldaps:// or STARTTLS). ca_certs_file:
+      # PEM of an internal CA; empty = the operating system's trusted CAs.
+      # Verify the AD server's certificate (the AD password crosses this
+      # connection). Internal CA: path of its PEM file inside the container
+      # (e.g. /app/config/ad-ca.pem); empty = the OS's trusted CAs.
+      tls_verify: true
+      ca_certs_file: ""
+      connect_timeout_s: 10
+      # Directory lookup for Security > People > Add person (search AD
+      # by name/account/email). Needs a read-only service account; the
+      # password comes from the env var named below. Leave search_bind_user
+      # empty to disable lookup (accounts can still be typed in).
+      # Directory lookup for Security > People > Add person. Empty = off
+      # (accounts are typed in); set a read-only account and put its
+      # password in .env.prod as CATALOG_AUTH_LDAP_BIND_PASSWORD.
+      search_bind_user: ""
+      search_bind_password_env_var: "CATALOG_AUTH_LDAP_BIND_PASSWORD"
+      directory_max_results: 25
+    # Fallback only — used when catalog.access.lattice_file is missing.
+    # The real matrix (names, colours, Arabic names, cell labels) is
+    # config/levels.yaml.
+    levels:
+      - {value: 10, key: "public", name: "Public"}
+      - {value: 40, key: "internal", name: "Internal"}
+      - {value: 50, key: "confidential", name: "Confidential"}
+      - {value: 70, key: "restricted", name: "Restricted"}
+      - {value: 80, key: "secret", name: "Secret"}
+    categories:
+      - {key: "A", name: "General", enabled: true}
+      - {key: "B", name: "Financial", enabled: true}
+      - {key: "C", name: "Personnel / HR", enabled: true}
+      - {key: "D", name: "Security", enabled: true}
+
+  # -------------------------------------------------------------------
+  # Data access realm — which (level, category) cell every database,
+  # schema, table and column sits in. The matrix itself (levels 10..120
+  # with colours, categories A..Z, Z = Quarantine, default cell 120Z,
+  # optional cell_labels such as 10A = "Ops General"; cells are always
+  # written level then category) lives in
+  # lattice_file (config/levels.yaml). Bucketing, strongest first: manual placement > rule >
+  # inherited from a parent's human decision > AI (flags/domain) >
+  # naming conventions > default. Manage it in the UI: Data access.
+  # -------------------------------------------------------------------
+  access:
+    lattice_file: "config/levels.yaml"
+    # DEVELOPMENT ONLY: anyone in an admin role sees ALL data. Production
+    # (config.prod.yaml) is false: administration is not clearance.
+    # Administration is not clearance: admins manage everything but see
+    # only the data their own roles' cells grant (give the admin role the
+    # cells it needs). true = admins see ALL data — never in production.
+    admins_see_all_data: false
+    # Apply levels.yaml category_folders / folder_conventions to
+    # database, schema and table names.
+    naming_conventions: true
+    # AI layer: category from the inferred business domain.
+    category_by_domain:
+      "Human Resources": "C"
+    # Screens people WITHOUT an admin role may open. Admins always see
+    # the whole app; "ask" is always on. Others you can add later:
+    # overview, sources, entities, relationships, glossary, suggestions,
+    # integrity, health (they still only ever show the person's own
+    # cells). Data access and Security stay admin-only. Enforced by the
+    # API, not just hidden in the menu.
+    non_admin_screens: ["ask"]
+
+  api:
+    host: "0.0.0.0"
+    port: 8100
+    cors_origins: ["<UI_ORIGIN>"]      # the UI's https origin; "*" is refused
+
+  # -------------------------------------------------------------------
+  # The catalog ANSWERER — a separate, optional, fully autonomous
+  # service that turns a plain-language question into a bounded
+  # read-only SQL query and returns the result as context chunks. Other
+  # applications (a RAG pipeline, a chatbot) can call it server-to-server
+  # as a data source with the service key below — never a hard
+  # dependency, this app never wires itself into anything else.
+  # Code default is false; this development config enables it. In a new
+  # environment turn it on only once the catalog is "reasonably ready"
+  # (real entities, TRUSTED status, real classification data).
+  # -------------------------------------------------------------------
+  answer:
+    enabled: false
+    host: "0.0.0.0"
+    port: 8200
+    cors_origins: ["<UI_ORIGIN>"]      # the UI's https origin; "*" is refused
+    # DEFAULT ONLY (see AnswerConfig.min_trust_level): an admin can lower it
+    # live from the Security tab. Production starts at the secure end
+    # (10 = confirmed/TRUSTED-equivalent evidence only).
+    max_entities_in_context: 12
+    # The same kind of data (employees, statuses, ...) often lives in several
+    # databases; when the best match can't answer, Ask tries the next ones.
+    max_databases_per_question: 3
+    max_fields_per_entity: 40
+    max_rows: 200
+    statement_timeout_seconds: 10
+    max_concurrent_queries_per_source: 1
+    audit_enabled: true
+    # Question audit retention (Security > Question audit): delete records
+    # older than this many days. 0 = keep forever.
+    audit_retention_days: 0
+    # TEMPORARY, for testing Ask before this app has its own
+    # roles/grants set up (true is the secure default — see
+    # AnswerConfig.require_grants in shared/config.py for exactly what
+    # this does and doesn't bypass). Every other safety layer (read-only
+    # SQL, table whitelist, full audit logging) stays on regardless of
+    # this flag. REVISIT before any real/shared use.
+    require_grants: true
+
+    # DEFAULT ONLY — see AnswerConfig.min_trust_level's docstring. The
+    # live value the running app actually uses is controlled from the
+    # Security tab (GET/PUT /v1/settings/trust-level) and lives in
+    # catalog_settings, not here; this only matters until someone has
+    # touched that control for the first time. 0 = use everything,
+    # labeled by trust score. 10 = require confirmed/TRUSTED-equivalent
+    # evidence only (the old hard gate).
+    min_trust_level: 10
+
+  web:
+    dev_port: 5180
+    # Where the web UI reaches the API from the browser during `dev.ps1`.
+    # Browser-facing URLs of the api and answer services (read by the web
+    # container at start, docker/docker-entrypoint-web.sh).
+    api_base_url: "<API_PUBLIC_URL>"
+    # Where the web UI's Ask tab reaches the (optional) catalog answerer
+    # from the browser — only matters once catalog.answer.enabled: true.
+    answer_base_url: "<ANSWER_PUBLIC_URL>"
+
+  health:
+    # Consecutive failures before a source is marked DEGRADED vs a
+    # single blip being tolerated silently.
+    source_failure_threshold: 3
+    catalog_db_retry_backoff_seconds: [5, 15, 30, 60, 120, 300]

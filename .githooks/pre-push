@@ -1,0 +1,19 @@
+#!/bin/sh
+# Refuse a push that carries private files or fails the release check.
+# Enabled by: git config core.hooksPath .githooks   (scripts/publish.py sets it)
+z=0000000000000000000000000000000000000000
+private='^(config/local/|branding/brand\.local/|docs/local/|data/)|(^|/)\.env($|\.)'
+while read -r local_ref local_sha remote_ref remote_sha; do
+  [ "$local_sha" = "$z" ] && continue
+  if [ "$remote_sha" = "$z" ]; then range="$local_sha"; else range="$remote_sha..$local_sha"; fi
+  bad=$(git log --name-only --format= $range | sort -u | grep -E "$private" | grep -vE '\.example$')
+  if [ -n "$bad" ]; then
+    echo "pre-push: private path(s) in pushed commits:" >&2
+    echo "$bad" >&2
+    exit 1
+  fi
+done
+py=python
+[ -x .venv/Scripts/python.exe ] && py=.venv/Scripts/python.exe
+[ -x .venv/bin/python ] && py=.venv/bin/python
+"$py" scripts/release_check.py || { echo "pre-push: release check failed" >&2; exit 1; }

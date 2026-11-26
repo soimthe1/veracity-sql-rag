@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>%BRAND_NAME%</title>
+    <!-- Arabic UI font (Latin text keeps the existing Inter/system stack —
+         see styles.css's font-family, which lists Noto Sans Arabic only
+         as a fallback so it's used purely for Arabic glyphs). -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Noto+Sans+Arabic:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <!-- Runtime config: see public/env.js. Loaded before the app bundle so
+         window.__ENV__ is available at import time. -->
+    <script src="/env.js"></script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

@@ -1,0 +1,19 @@
+# Combined requirements for validation and tests (compile/lint/migration
+# checks, python -m pytest tests). NOT the deployment requirements — see
+# engine/requirements.txt, api/requirements.txt, answer/requirements.txt for those.
+pyyaml==6.0.2
+python-dotenv==1.0.1
+pydantic==2.9.2
+SQLAlchemy==2.0.35
+psycopg2-binary==2.9.9
+alembic==1.13.3
+requests==2.32.3
+APScheduler==3.10.4
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+httpx==0.27.2
+ldap3==2.9.1
+PyJWT==2.9.0
+python-docx==1.2.0
+python-pptx==1.0.2
+pytest==8.3.3

@@ -1,0 +1,58 @@
+# Catalog answerer ("catalog answerer" — POST /v1/ask) container.
+#
+# Its own image/process, separate from both engine and api (see
+# DECISIONS.md's "why a separate process" note) — this one does a piece
+# of what each of the other two does (reads the catalog Postgres like
+# api, talks to a SQL Server source and an LLM like engine), which is
+# exactly why a slow LLM call or a stuck source query on THIS endpoint
+# must never be able to affect either of the other two processes. Build
+# from the repo root:
+#
+#   docker build -f docker/Dockerfile.answer -t veracity-sql-answer .
+#
+# catalog.answer.enabled: false (the default) keeps this container up
+# but fully inert — see answer/main.py. Bundles no data store of its
+# own; connects outward only, same as every other image here.
+
+FROM python:3.11-slim-bookworm AS base
+
+# --- Microsoft ODBC Driver 18 for SQL Server -------------------------------
+# Same install as docker/Dockerfile.engine — this process executes
+# guardrail-approved SQL directly via engine.connectors.mssql, so it
+# needs the same driver.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl gnupg ca-certificates apt-transport-https \
+    && curl -sSL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor -o /usr/share/keyrings/microsoft-prod.gpg \
+    && echo "deb [arch=amd64,arm64,armhf signed-by=/usr/share/keyrings/microsoft-prod.gpg] https://packages.microsoft.com/debian/12/prod bookworm main" \
+       > /etc/apt/sources.list.d/mssql-release.list \
+    && apt-get update \
+    && ACCEPT_EULA=Y apt-get install -y --no-install-recommends msodbcsql18 unixodbc unixodbc-dev \
+    && apt-get purge -y --auto-remove curl gnupg \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY answer/requirements.txt answer/requirements.txt
+RUN pip install --no-cache-dir -r answer/requirements.txt
+
+COPY shared/ shared/
+COPY engine/ engine/
+COPY api/ api/
+COPY answer/ answer/
+COPY migrations/ migrations/
+COPY alembic.ini alembic.ini
+COPY config/ config/
+
+# .env/.env.prod are supplied at runtime via docker-compose's env_file,
+# never baked into the image.
+
+# Settings: config/ is mounted read-only by compose; APP_ENV=prod (set in
+# docker-compose.prod.yaml) merges config.prod.yaml over config.yaml.
+ENV PYTHONUNBUFFERED=1
+
+EXPOSE 8200
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+    CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8200/health', timeout=4).status == 200 else 1)"
+
+CMD ["uvicorn", "answer.main:app", "--host", "0.0.0.0", "--port", "8200"]

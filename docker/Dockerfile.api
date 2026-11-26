@@ -1,0 +1,42 @@
+# Catalog REST API container.
+#
+# Its own image/process, separate from the engine (see DECISIONS.md) —
+# this one only ever reads the already-computed catalog Postgres and,
+# for /v1/search and /v1/resolve, optionally reaches a configured search
+# backend. It never touches a SQL Server source or an LLM directly, so it
+# stays fast and simple to scale independently of the engine. Build from
+# the repo root:
+#
+#   docker build -f docker/Dockerfile.api -t veracity-sql-api .
+#
+# Bundles no data store of its own — connects outward to the catalog
+# Postgres via env-supplied host/port values only.
+
+# Pinned to -bookworm for consistency with docker/Dockerfile.engine (see
+# its comment) even though the api image doesn't need the ODBC repo itself.
+FROM python:3.11-slim-bookworm AS base
+
+WORKDIR /app
+
+COPY api/requirements.txt api/requirements.txt
+RUN pip install --no-cache-dir -r api/requirements.txt
+
+COPY shared/ shared/
+COPY api/ api/
+COPY migrations/ migrations/
+COPY alembic.ini alembic.ini
+COPY config/ config/
+
+# .env/.env.prod are supplied at runtime via docker-compose's env_file,
+# never baked into the image.
+
+# Settings: config/ is mounted read-only by compose; APP_ENV=prod (set in
+# docker-compose.prod.yaml) merges config.prod.yaml over config.yaml.
+ENV PYTHONUNBUFFERED=1
+
+EXPOSE 8100
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+    CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8100/health', timeout=4).status == 200 else 1)"
+
+CMD ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8100"]

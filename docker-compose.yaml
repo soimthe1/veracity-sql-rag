@@ -1,0 +1,74 @@
+# veracity-sql - development (containerised)
+#
+# Builds the four images from source and runs them with the development
+# settings (config/config.yaml, secrets from .env). The usual local loop is
+# .\scripts\dev.ps1 start (no Docker); this file is the optional
+# containerised alternative. Production uses docker-compose.prod.yaml.
+#
+#   docker compose up -d --build      start
+#   docker compose logs -f            follow logs
+#   docker compose down               stop
+#
+# Web UI: http://localhost:8180   API: http://localhost:8100/health
+# Answer: http://localhost:8200/health
+#
+# Nothing else is defined here on purpose: the catalog connects OUTWARD to
+# your existing Postgres, SQL Server source(s) and LLM endpoint. When those
+# run on the Docker host, config.yaml must name them as host.docker.internal,
+# not localhost (inside a container localhost is the container itself).
+# engine, api and answer apply the Alembic migrations at startup.
+
+# Project and image names: override with COMPOSE_PROJECT_NAME / IMAGE_PREFIX
+# in .env (dev) or .env.prod (prod).
+name: ${COMPOSE_PROJECT_NAME:-veracity-sql}
+
+x-backend: &backend
+  env_file:
+    - .env                             # secrets only
+  environment:
+    APP_ENV: dev
+  volumes:
+    # Read-only; a config change takes effect on container restart, no rebuild.
+    - ./config:/app/config:ro
+  restart: unless-stopped
+
+services:
+  engine:
+    <<: *backend
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.engine
+    image: ${IMAGE_PREFIX:-veracity-sql}-engine:latest
+
+  api:
+    <<: *backend
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.api
+    image: ${IMAGE_PREFIX:-veracity-sql}-api:latest
+    ports:
+      - "8100:8100"
+
+  answer:
+    <<: *backend
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.answer
+    image: ${IMAGE_PREFIX:-veracity-sql}-answer:latest
+    ports:
+      - "8200:8200"
+
+  web:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.web
+    image: ${IMAGE_PREFIX:-veracity-sql}-web:latest
+    environment:
+      APP_ENV: dev
+    volumes:
+      # catalog.web.api_base_url / answer_base_url are read from here at start.
+      - ./config:/app/config:ro
+    ports:
+      - "8180:8080"
+    depends_on: [api]
+    restart: unless-stopped

@@ -1,0 +1,16 @@
+# Catalog REST API process.
+# Install from the repo root so `shared/` resolves: pip install -r api/requirements.txt
+pyyaml==6.0.2
+python-dotenv==1.0.1
+pydantic==2.9.2
+SQLAlchemy==2.0.35
+psycopg2-binary==2.9.9
+alembic==1.13.3
+requests==2.32.3
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+# shared/auth/ — AD-backed login for the web UI (catalog.auth.enabled).
+# Both are true no-ops when catalog.auth.enabled: false (the default):
+# ad_auth.authenticate()/tokens.issue() are never called.
+ldap3==2.9.1
+PyJWT==2.9.0
